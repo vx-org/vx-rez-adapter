@@ -500,10 +500,12 @@ mod tests {
         }
     }
 
-    /// Keys differing only by case must not produce two entries, or the OS
-    /// picks one arbitrarily when the environment is handed to a child.
+    /// On Windows, keys differing only by case must collapse to one entry, or
+    /// the OS picks one arbitrarily when the environment reaches a child. On
+    /// unix the names stay distinct, because there the OS treats them as two
+    /// different variables.
     #[test]
-    fn case_variant_keys_collapse_to_one_entry() {
+    fn case_variant_keys_collapse_only_where_the_os_is_case_insensitive() {
         let mut delta = EnvDelta::new();
         delta.push_action(
             env_key("Path"),
@@ -518,6 +520,11 @@ mod tests {
             .keys()
             .filter(|k| k.eq_ignore_ascii_case("PATH"))
             .count();
-        assert_eq!(path_entries, 1);
+
+        if cfg!(windows) {
+            assert_eq!(path_entries, 1);
+        } else {
+            assert_eq!(path_entries, 2);
+        }
     }
 }
