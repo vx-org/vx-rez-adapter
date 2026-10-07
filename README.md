@@ -6,9 +6,12 @@ Rust adapter integrating [vx](https://github.com/vx-org) with [rez-next](https:/
 
 ## Status
 
-**0.1.0 is a scaffolding release.** The module layout and the public API surface are in place and fully documented, but the two core verbs are not implemented yet — `RezAdapter::resolve_env` and `RezAdapter::launch` return `Error::NotImplemented`.
+Both core verbs are implemented on top of the `rez-next` SDK:
 
-This is a staging choice, not a dependency blocker: the resolution backend will depend on the `rez-next-build` SDK, and `rez-next-build` **0.3.9 is already published on crates.io** (released 2026-10-07, not yanked). The crate ships its shape first so downstream consumers can compile against a stable surface, and stage 2 wires in the resolve and launch paths on top of it. The environment model itself (`EnvDelta`, `ResolvedEnv`) is implemented and tested, because it has no upstream dependency.
+- **`resolve_env`** looks packages up on disk and runs their Rex commands through `rez-next-context`, returning a `ResolvedEnv`.
+- **`launch`** spawns a program with that environment applied and reports its exit status.
+
+The environment model (`EnvDelta`, `ResolvedEnv`) is implemented and tested independently of the resolve, so it can be used on its own.
 
 ## Installation
 
@@ -32,17 +35,33 @@ Requires Rust 1.95.0 or newer (edition 2024).
 
 ### Resolving an environment
 
+Packages are found under `REZ_PACKAGES_PATH`, or under an explicit override:
+
 ```rust
 use vx_rez_adapter::{RezAdapter, ResolveRequest};
 
 let adapter = RezAdapter::new();
-let request = ResolveRequest::new(["python-3.11", "maya-2024"]);
 
-// Stage 2: returns the resolved environment.
-// Until then: returns `Error::NotImplemented`.
-let env = adapter.resolve_env(&request)?;
-println!("PATH={}", env.environment["PATH"]);
+// Uses REZ_PACKAGES_PATH, or an explicit override:
+let request = ResolveRequest::new(["python-3.11"])
+    .package_paths(["/srv/packages"]);
+
+let resolved = adapter.resolve_env(&request)?;
+println!("PATH={}", resolved.environment["PATH"]);
+println!("resolved {} package(s)", resolved.package_roots.len());
 ```
+
+Packages are laid out the way rez expects them:
+
+```
+<package_path>/<name>/<version>/package.py
+```
+
+A bare request like `"python"` selects the highest version found. A request that
+carries a version constraint — `"python-3.11"`, `"python-3.11+"`,
+`"python<4"` — selects the highest version **matching that constraint**. A
+constraint that matches nothing is an error; the resolve never quietly hands
+back a version you did not ask for.
 
 ### Launching a tool inside a resolved environment
 
@@ -50,22 +69,43 @@ println!("PATH={}", env.environment["PATH"]);
 use vx_rez_adapter::{LaunchRequest, RezAdapter, ResolveRequest};
 
 let adapter = RezAdapter::new();
-let env = adapter.resolve_env(&ResolveRequest::new(["maya-2024"]))?;
+let resolved = adapter.resolve_env(&ResolveRequest::new(["python-3.11"]))?;
 
-// Stage 2: spawns the program with `env.environment` applied.
-// Until then: returns `Error::NotImplemented`.
 let outcome = adapter.launch(
-    &LaunchRequest::new("maya")
-        .args(["-batch", "-file", "scene.ma"])
-        .environment(env.environment),
+    &LaunchRequest::new("python")
+        .arg("--version")
+        .environment(resolved.environment),
 )?;
 
 assert!(outcome.success());
+println!("exit code: {:?}", outcome.code);
 ```
+
+The child inherits this process's stdin, stdout, and stderr, so an interactive tool behaves the way a user expects. On Windows the child is created with `CREATE_NO_WINDOW`, so a GUI-launched tool does not open an extra console window.
+
+**A program that runs and exits non-zero is a successful launch** — you get `Ok(outcome)` with `outcome.success() == false`. Only a failure to *start* the program is an `Err`.
+
+This matches `std::process::Command::status()`: `Ok` means "the process was started", `success()` means "it did its job". **Always check `success()`** — inspecting only the `Result` makes a tool that ran and failed look identical to one that ran and succeeded. The two are not the same, and they are usually handled differently.
+
+```rust
+use vx_rez_adapter::LaunchRequest;
+
+// Runs, exits 1 -> Ok(outcome) with success() == false
+let outcome = RezAdapter::new().launch(
+    &LaunchRequest::new("python").arg("-c").arg("raise SystemExit(1)"),
+)?;
+assert!(!outcome.success());
+
+// Cannot be started at all -> Err(Error::Spawn { .. })
+let err = RezAdapter::new().launch(&LaunchRequest::new("no-such-tool"));
+assert!(err.is_err());
+```
+
+On unix, a child killed by a signal reports `code: None` and `signal: Some(n)`, so a caller can tell *how* the child died rather than only that it failed.
 
 ### Working with the environment model
 
-The environment model is available today and needs no resolve:
+The environment model is available without a resolve:
 
 ```rust
 use std::collections::BTreeMap;
@@ -109,6 +149,47 @@ Three properties matter for correctness, and each is covered by tests:
   case-insensitive, so `Path` and `PATH` name one variable. Build keys with
   `env_key` to avoid handing a child two competing definitions.
 
+When a resolve produces a delta, a changed variable is recorded as a `Prepend`
+or `Append` only when the change really is one — and only for path-like
+variables (`PATH`, `LD_LIBRARY_PATH`, `PYTHONPATH`, and similar). The comparison
+splits on the separator and compares whole segments, so `/bin` becoming
+`/usr/bin` is a `Set`, not a prepend of `/usr`. Anything else is a `Set`, which
+always replays correctly.
+
+## Error handling
+
+Every failure is a value, never a panic. The resolve path reports which request
+failed and why:
+
+```rust
+use vx_rez_adapter::{Error, RezAdapter, ResolveRequest};
+
+let err = RezAdapter::new()
+    .resolve_env(&ResolveRequest::new(["no-such-package"]))
+    .unwrap_err();
+
+match err {
+    Error::Resolve { request, reason } => {
+        eprintln!("could not resolve `{request}`: {reason}");
+    }
+    Error::PackagePath { path, .. } => {
+        eprintln!("unusable package path: {}", path.display());
+    }
+    Error::Spawn { program, .. } => {
+        eprintln!("could not start `{program}`");
+    }
+    other => eprintln!("{other}"),
+}
+```
+
+One case is worth knowing about: a package whose `def commands()` body the
+upstream loader cannot parse contributes **nothing** to the environment rather
+than failing the resolve. That is `rez-next`'s behaviour, surfaced here so it is
+not mistaken for a silent success of your own code.
+
+`Error::source()` carries the underlying I/O error for `PackagePath` and
+`Spawn`, so a caller can inspect the OS-level cause.
+
 ## Public API
 
 | Type | Purpose |
@@ -123,16 +204,21 @@ Three properties matter for correctness, and each is covered by tests:
 | `Environment` | Alias for `BTreeMap<String, String>`; sorted for deterministic output |
 | `env_key` | Normalizes a variable name for use as a map key |
 | `path_separator` | Host path list separator (`:` on unix, `;` on Windows) |
+| `which` | Locates a program on `PATH` without spawning it |
 | `Error` / `Result` | Adapter error and result types |
 
 The data-oriented public types are `#[non_exhaustive]`, so new fields and
-variants can be added as stage 2 lands without breaking downstream code.
+variants can be added without breaking downstream code.
 
-## Roadmap (stage 2)
+## Examples
 
-1. Implement `resolve_env` against the `rez-next-build` SDK.
-2. Implement `launch` as a real process spawn with the resolved environment.
-3. Add integration tests using constructed rez packages.
+```bash
+REZ_PACKAGES_PATH=/srv/packages cargo run --example resolve_and_launch
+```
+
+The example resolves a package, launches a tool inside it, and demonstrates the
+failure path. It degrades to a readable message when no repository is
+configured, so it stays runnable in a bare checkout.
 
 ## Development
 

@@ -49,6 +49,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --all-targets
+      # --all-targets does not cover doctests, which are the only place the
+      # public API is compiled from outside the crate. Without this lane a
+      # broken example in a doc comment ships green.
+      - run: cargo test --workspace --doc
 
   docs:
     name: Docs
