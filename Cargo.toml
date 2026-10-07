@@ -11,5 +11,15 @@ keywords = ["rez", "rez-next", "vx", "package-manager", "environment"]
 categories = ["development-tools"]
 
 [dependencies]
+rez-next-context = "0.3.9"
+rez-next-package = "0.3.9"
+rez-next-version = "0.3.9"
+serde_yaml = "0.9.34"
+tokio = { version = "1.53.2", features = ["rt", "macros"] }
 
 [dev-dependencies]
+tempfile = "3"
+
+[[example]]
+name = "resolve_and_launch"
+path = "examples/resolve_and_launch.rs"

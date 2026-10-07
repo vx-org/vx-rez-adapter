@@ -6,11 +6,12 @@
 //! 1. Resolving the environment of one or more rez packages.
 //! 2. Launching a tool as a child process with that environment applied.
 //!
-//! This is the initial scaffolding release. The module layout and the shape of
-//! the public surface are in place, but the resolution and launch paths are not
-//! implemented yet: they deliberately return [`Error::NotImplemented`] so the
-//! crate compiles and releases while the upstream SDK dependency is still being
-//! settled.
+//! Both capabilities are implemented on top of the `rez-next` SDK:
+//!
+//! - [`RezAdapter::resolve_env`] runs the Rex commands of the resolved packages
+//!   through `rez-next-context` and reports the result as a [`ResolvedEnv`].
+//! - [`RezAdapter::launch`] spawns the program with that environment applied
+//!   and reports its exit status.
 
 #![deny(missing_docs)]
 
@@ -20,10 +21,14 @@ use std::path::PathBuf;
 pub mod env;
 pub mod error;
 pub mod launch;
+pub mod process;
+pub mod resolve;
 
 pub use env::{EnvAction, EnvDelta, ResolvedEnv, env_key, path_separator};
 pub use error::{Error, Result};
 pub use launch::{LaunchOutcome, LaunchRequest};
+pub use process::which;
+pub use resolve::resolve_env;
 
 /// A request to resolve the environment of a set of rez packages.
 ///
@@ -52,12 +57,36 @@ impl ResolveRequest {
             package_paths: None,
         }
     }
+
+    /// Overrides the package search paths.
+    ///
+    /// Without this the resolve falls back to the `REZ_PACKAGES_PATH`
+    /// environment variable.
+    #[must_use]
+    pub fn package_paths<I, P>(mut self, paths: I) -> Self
+    where
+        I: IntoIterator<Item = P>,
+        P: Into<PathBuf>,
+    {
+        self.package_paths = Some(paths.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Adds packages required by the caller but not part of the resolve.
+    #[must_use]
+    pub fn implicit_requests<I, S>(mut self, requests: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.implicit_requests = requests.into_iter().map(Into::into).collect();
+        self
+    }
 }
 
 /// Resolves rez package environments and launches tools inside them.
 ///
-/// This is the top-level entry point of the crate. Both verbs are unimplemented
-/// in this release; see the crate-level docs for the roadmap.
+/// This is the top-level entry point of the crate.
 #[derive(Debug, Clone, Default)]
 pub struct RezAdapter;
 
@@ -70,24 +99,60 @@ impl RezAdapter {
 
     /// Resolves the environment described by `request`.
     ///
+    /// Packages are looked up under [`ResolveRequest::package_paths`], or under
+    /// `REZ_PACKAGES_PATH` when the request does not override them. Their Rex
+    /// commands are then applied to the current process environment.
+    ///
     /// # Errors
     ///
-    /// Always returns [`Error::NotImplemented`] in this release.
+    /// Returns [`Error::Resolve`] when a request cannot be parsed or no package
+    /// satisfies it, and [`Error::PackagePath`] when a configured package path
+    /// cannot be read.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use vx_rez_adapter::{RezAdapter, ResolveRequest};
+    ///
+    /// let request = ResolveRequest::new(["python-3.11"])
+    ///     .package_paths(["/packages"]);
+    /// let resolved = RezAdapter::new().resolve_env(&request)?;
+    /// println!("{}", resolved.environment["PATH"]);
+    /// # Ok::<(), vx_rez_adapter::Error>(())
+    /// ```
     pub fn resolve_env(&self, request: &ResolveRequest) -> Result<ResolvedEnv> {
-        Err(Error::NotImplemented {
-            what: format!("resolve_env for [{}]", request.requests.join(", ")),
-        })
+        resolve::resolve_env(request)
     }
 
     /// Launches `request.program` with the resolved environment applied.
     ///
+    /// The child inherits this process's stdin, stdout, and stderr, and its
+    /// exit code and terminating signal are returned in a [`LaunchOutcome`]. A
+    /// program that runs and exits non-zero is a successful launch; only a
+    /// failure to *start* the program is an error.
+    ///
     /// # Errors
     ///
-    /// Always returns [`Error::NotImplemented`] in this release.
+    /// Returns [`Error::Spawn`] when the program cannot be started.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use vx_rez_adapter::{LaunchRequest, RezAdapter, ResolveRequest};
+    ///
+    /// let adapter = RezAdapter::new();
+    /// let resolved = adapter.resolve_env(&ResolveRequest::new(["python-3.11"]))?;
+    ///
+    /// let outcome = adapter.launch(
+    ///     &LaunchRequest::new("python")
+    ///         .arg("--version")
+    ///         .environment(resolved.environment),
+    /// )?;
+    /// assert!(outcome.success());
+    /// # Ok::<(), vx_rez_adapter::Error>(())
+    /// ```
     pub fn launch(&self, request: &LaunchRequest) -> Result<LaunchOutcome> {
-        Err(Error::NotImplemented {
-            what: format!("launch of {:?}", request.program),
-        })
+        process::launch(request)
     }
 }
 
