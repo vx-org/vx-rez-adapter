@@ -9,6 +9,7 @@ use crate::Environment;
 
 /// A request to launch one program inside a prepared environment.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct LaunchRequest {
     /// Program to execute. Resolved through `PATH` when not absolute.
     pub program: PathBuf,
@@ -68,18 +69,22 @@ impl LaunchRequest {
 
 /// The result of running a [`LaunchRequest`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct LaunchOutcome {
     /// Process exit code. `None` when the child was terminated by a signal.
     pub code: Option<i32>,
-    /// Whether the child terminated because of a signal.
-    pub signaled: bool,
+    /// The signal that terminated the child, when it was signalled.
+    ///
+    /// Carrying the number rather than a bare `signaled: bool` keeps the
+    /// information a caller needs to report *which* signal killed the child.
+    pub signal: Option<i32>,
 }
 
 impl LaunchOutcome {
     /// Returns true when the child exited with status zero.
     #[must_use]
     pub fn success(&self) -> bool {
-        !self.signaled && self.code == Some(0)
+        self.signal.is_none() && self.code == Some(0)
     }
 }
 
@@ -119,23 +124,34 @@ mod tests {
         assert!(
             LaunchOutcome {
                 code: Some(0),
-                signaled: false
+                signal: None
             }
             .success()
         );
         assert!(
             !LaunchOutcome {
                 code: Some(1),
-                signaled: false
+                signal: None
             }
             .success()
         );
         assert!(
             !LaunchOutcome {
                 code: Some(0),
-                signaled: true
+                signal: Some(9)
             }
             .success()
         );
+    }
+
+    #[test]
+    fn signal_number_is_retained() {
+        let outcome = LaunchOutcome {
+            code: None,
+            signal: Some(9),
+        };
+        assert!(!outcome.success());
+        assert_eq!(outcome.signal, Some(9));
+        assert_eq!(outcome.code, None);
     }
 }

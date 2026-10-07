@@ -21,7 +21,7 @@ pub mod env;
 pub mod error;
 pub mod launch;
 
-pub use env::{EnvDelta, ResolvedEnv};
+pub use env::{EnvAction, EnvDelta, ResolvedEnv, env_key, path_separator};
 pub use error::{Error, Result};
 pub use launch::{LaunchOutcome, LaunchRequest};
 
@@ -95,4 +95,8 @@ impl RezAdapter {
 ///
 /// `BTreeMap` keeps the rendering of an environment deterministic, which
 /// matters for diffing and for reproducible launches.
+///
+/// Keys should be built with [`env_key`] so that the case-insensitive
+/// environment of Windows collapses `Path` and `PATH` into one entry instead of
+/// handing a child process two competing definitions.
 pub type Environment = BTreeMap<String, String>;
