@@ -1,0 +1,15 @@
+[package]
+name = "vx-rez-adapter"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95.0"
+authors = ["LongHao <hal.long@outlook.com>"]
+description = "Rust adapter integrating vx with rez-next package environments"
+license = "Apache-2.0"
+repository = "https://github.com/vx-org/vx-rez-adapter"
+keywords = ["rez", "rez-next", "vx", "package-manager", "environment"]
+categories = ["development-tools"]
+
+[dependencies]
+
+[dev-dependencies]
