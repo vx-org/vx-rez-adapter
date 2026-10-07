@@ -57,7 +57,11 @@ Packages are laid out the way rez expects them:
 <package_path>/<name>/<version>/package.py
 ```
 
-A bare request like `"python"` selects the highest version found.
+A bare request like `"python"` selects the highest version found. A request that
+carries a version constraint — `"python-3.11"`, `"python-3.11+"`,
+`"python<4"` — selects the highest version **matching that constraint**. A
+constraint that matches nothing is an error; the resolve never quietly hands
+back a version you did not ask for.
 
 ### Launching a tool inside a resolved environment
 
@@ -79,7 +83,9 @@ println!("exit code: {:?}", outcome.code);
 
 The child inherits this process's stdin, stdout, and stderr, so an interactive tool behaves the way a user expects. On Windows the child is created with `CREATE_NO_WINDOW`, so a GUI-launched tool does not open an extra console window.
 
-A program that runs and exits non-zero is a **successful launch** with `outcome.success() == false`. Only a failure to *start* the program is an `Err`. That distinction matters: a tool that ran and rejected its arguments is not an adapter failure.
+**A program that runs and exits non-zero is a successful launch** — you get `Ok(outcome)` with `outcome.success() == false`. Only a failure to *start* the program is an `Err`.
+
+This matches `std::process::Command::status()`: `Ok` means "the process was started", `success()` means "it did its job". **Always check `success()`** — inspecting only the `Result` makes a tool that ran and failed look identical to one that ran and succeeded. The two are not the same, and they are usually handled differently.
 
 ```rust
 use vx_rez_adapter::LaunchRequest;
@@ -143,6 +149,13 @@ Three properties matter for correctness, and each is covered by tests:
   case-insensitive, so `Path` and `PATH` name one variable. Build keys with
   `env_key` to avoid handing a child two competing definitions.
 
+When a resolve produces a delta, a changed variable is recorded as a `Prepend`
+or `Append` only when the change really is one — and only for path-like
+variables (`PATH`, `LD_LIBRARY_PATH`, `PYTHONPATH`, and similar). The comparison
+splits on the separator and compares whole segments, so `/bin` becoming
+`/usr/bin` is a `Set`, not a prepend of `/usr`. Anything else is a `Set`, which
+always replays correctly.
+
 ## Error handling
 
 Every failure is a value, never a panic. The resolve path reports which request
@@ -168,6 +181,11 @@ match err {
     other => eprintln!("{other}"),
 }
 ```
+
+One case is worth knowing about: a package whose `def commands()` body the
+upstream loader cannot parse contributes **nothing** to the environment rather
+than failing the resolve. That is `rez-next`'s behaviour, surfaced here so it is
+not mistaken for a silent success of your own code.
 
 `Error::source()` carries the underlying I/O error for `PackagePath` and
 `Spawn`, so a caller can inspect the OS-level cause.

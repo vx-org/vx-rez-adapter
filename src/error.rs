@@ -36,6 +36,18 @@ pub enum Error {
         source: io::Error,
     },
 
+    /// A package definition exists but could not be read.
+    ///
+    /// Distinct from [`Error::PackagePath`], which is about the search path:
+    /// this is a package directory that is present and named like a package but
+    /// whose definition the loader rejected.
+    PackageDefinition {
+        /// The package directory that could not be read.
+        path: PathBuf,
+        /// Why loading failed.
+        reason: String,
+    },
+
     /// Spawning the requested program failed.
     Spawn {
         /// The program that could not be spawned.
@@ -57,6 +69,13 @@ impl std::fmt::Display for Error {
             Self::PackagePath { path, .. } => {
                 write!(f, "unusable package path `{}`", path.display())
             }
+            Self::PackageDefinition { path, reason } => {
+                write!(
+                    f,
+                    "unreadable package definition `{}`: {reason}",
+                    path.display()
+                )
+            }
             Self::Spawn { program, .. } => {
                 write!(f, "failed to spawn program `{program}`")
             }
@@ -68,7 +87,9 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::PackagePath { source, .. } | Self::Spawn { source, .. } => Some(source),
-            Self::NotImplemented { .. } | Self::Resolve { .. } => None,
+            Self::NotImplemented { .. } | Self::Resolve { .. } | Self::PackageDefinition { .. } => {
+                None
+            }
         }
     }
 }

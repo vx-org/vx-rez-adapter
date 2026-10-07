@@ -127,9 +127,13 @@ impl RezAdapter {
     /// Launches `request.program` with the resolved environment applied.
     ///
     /// The child inherits this process's stdin, stdout, and stderr, and its
-    /// exit code and terminating signal are returned in a [`LaunchOutcome`]. A
-    /// program that runs and exits non-zero is a successful launch; only a
-    /// failure to *start* the program is an error.
+    /// exit code and terminating signal are returned in a [`LaunchOutcome`].
+    ///
+    /// A program that runs and exits non-zero is a **successful launch**: this
+    /// returns `Ok(outcome)` with [`LaunchOutcome::success`] reporting `false`.
+    /// Only a failure to *start* the program is an `Err`. Callers must check
+    /// `success()` — inspecting only the `Result` cannot distinguish a tool
+    /// that ran and failed from one that ran and succeeded.
     ///
     /// # Errors
     ///

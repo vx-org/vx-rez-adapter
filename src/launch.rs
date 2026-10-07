@@ -1,7 +1,7 @@
 //! Describing and reporting the launch of a tool inside a resolved environment.
 //!
-//! This module defines the request and outcome types only. Spawning is part of
-//! the next stage, which needs the rez-next resolution backend.
+//! This module defines the request and outcome types. Spawning itself lives in
+//! [`crate::process`].
 
 use std::path::{Path, PathBuf};
 

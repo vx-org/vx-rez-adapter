@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use rez_next_context::{ContextConfig, EnvironmentManager, PathStrategy, ShellType};
 use rez_next_package::Package;
-use rez_next_package::requirement::RequirementParser;
+use rez_next_package::requirement::{RequirementParser, VersionConstraint};
 
 use crate::ResolveRequest;
 use crate::env::{EnvAction, EnvDelta, ResolvedEnv, env_key};
@@ -112,7 +112,12 @@ pub fn resolve_env(request: &ResolveRequest) -> Result<ResolvedEnv> {
             request: raw.clone(),
             reason,
         })?;
-        let found = find_package(&paths, &requirement.name, raw)?;
+        let found = find_package(
+            &paths,
+            &requirement.name,
+            requirement.version_constraint.as_ref(),
+            raw,
+        )?;
         matched.push(found);
     }
 
@@ -144,12 +149,22 @@ fn parent_environment() -> HashMap<String, String> {
         .collect()
 }
 
-/// Finds the package satisfying `name` under one of `paths`.
+/// Finds the package satisfying `name` and `constraint` under one of `paths`.
 ///
-/// Rez lays packages out as `<path>/<name>/<version>/package.py`. The adapter
-/// scans for the highest version directory that carries a package definition,
-/// which is what a plain `rez-env <name>` request means.
-fn find_package(paths: &[PathBuf], name: &str, raw: &str) -> Result<MatchedPackage> {
+/// Rez lays packages out as `<path>/<name>/<version>/package.py`. Candidates
+/// whose version does not satisfy `constraint` are discarded, and the highest
+/// surviving version wins — which is what `rez-env <name>` means for a bare
+/// request, and what `rez-env <name>-<version>` means for a pinned one.
+///
+/// A constraint that excludes every candidate is an error rather than a reason
+/// to fall back to "pick any version": silently handing a caller a different
+/// version than the one it asked for is the worst outcome here.
+fn find_package(
+    paths: &[PathBuf],
+    name: &str,
+    constraint: Option<&VersionConstraint>,
+    raw: &str,
+) -> Result<MatchedPackage> {
     let mut best: Option<(rez_next_version::Version, MatchedPackage)> = None;
 
     for root in paths {
@@ -166,7 +181,12 @@ fn find_package(paths: &[PathBuf], name: &str, raw: &str) -> Result<MatchedPacka
             let Some(version) = version_of(&version_dir) else {
                 continue;
             };
-            let Some(package) = load_package(&version_dir, name, &version) else {
+            if let Some(constraint) = constraint
+                && !constraint.is_satisfied_by(&version)
+            {
+                continue;
+            }
+            let Some(package) = load_package(&version_dir)? else {
                 continue;
             };
 
@@ -187,7 +207,13 @@ fn find_package(paths: &[PathBuf], name: &str, raw: &str) -> Result<MatchedPacka
     best.map(|(_, matched)| matched)
         .ok_or_else(|| Error::Resolve {
             request: raw.to_string(),
-            reason: format!("no package `{name}` found under {}", render_paths(paths)),
+            reason: match constraint {
+                Some(constraint) => format!(
+                    "no version of `{name}` matching {constraint:?} found under {}",
+                    render_paths(paths)
+                ),
+                None => format!("no package `{name}` found under {}", render_paths(paths)),
+            },
         })
 }
 
@@ -199,69 +225,34 @@ fn version_of(dir: &Path) -> Option<rez_next_version::Version> {
 
 /// Loads a package definition from `dir`, if it has one.
 ///
-/// A rez package is defined by `package.py`, with `package.yaml` as the
-/// alternative. Neither being present means the directory is not a package.
-fn load_package(dir: &Path, name: &str, version: &rez_next_version::Version) -> Option<Package> {
-    let mut package = Package {
-        name: name.to_string(),
-        version: Some(version.clone()),
-        ..Package::default()
-    };
-
-    let py = dir.join("package.py");
-    let yaml = dir.join("package.yaml");
-
-    if py.is_file() {
-        let body = std::fs::read_to_string(&py).ok()?;
-        package.commands = extract_commands(&body);
-        package.filepath = Some(py.to_string_lossy().into_owned());
-    } else if yaml.is_file() {
-        let body = std::fs::read_to_string(&yaml).ok()?;
-        let parsed: Package = serde_yaml::from_str(&body).ok()?;
-        package = parsed;
-        package.name = name.to_string();
-        package.version = Some(version.clone());
-        package.filepath = Some(yaml.to_string_lossy().into_owned());
-    } else {
-        return None;
+/// Delegating to `Package::from_path` matters beyond convenience: it is the
+/// only way the adapter picks up `requires`, `tools`, `variants`, and `config`
+/// alongside `commands`. A hand-written `package.py` reader that only extracted
+/// the command body would silently drop the dependency declarations, and the
+/// resolve would then build an environment missing what those dependencies
+/// contribute.
+///
+/// Returns `Ok(None)` for a directory that is not a package at all.
+fn load_package(dir: &Path) -> Result<Option<Package>> {
+    match Package::from_path(dir) {
+        Ok(package) => Ok(Some(package)),
+        // `from_path` reports a directory with no recognisable definition the
+        // same way it reports one it cannot read, so the two are told apart
+        // here rather than by inspecting the error text.
+        Err(_) if !dir.is_dir() => Ok(None),
+        Err(_) if !has_package_definition(dir) => Ok(None),
+        Err(source) => Err(Error::PackageDefinition {
+            path: dir.to_path_buf(),
+            reason: source.to_string(),
+        }),
     }
-
-    Some(package)
 }
 
-/// Pulls the body of `def commands()` out of a `package.py` source.
-///
-/// The adapter keeps this deliberately small: it covers the common single-block
-/// form so a constructed package can be resolved without pulling in a Python
-/// runtime. Packages outside that shape still resolve, just without their Rex
-/// commands, which yields an environment with the package root recorded but no
-/// variable changes.
-fn extract_commands(source: &str) -> Option<String> {
-    let header = source.find("def commands(")?;
-    let rest = &source[header..];
-    let body_start = rest.find('\n')? + 1;
-    let body = &rest[body_start..];
-
-    let mut indent: Option<usize> = None;
-    let mut out = String::new();
-    for line in body.lines() {
-        if line.trim().is_empty() {
-            out.push('\n');
-            continue;
-        }
-        let width = line.len() - line.trim_start().len();
-        match indent {
-            None => indent = Some(width),
-            Some(expected) => {
-                if width < expected {
-                    break;
-                }
-            }
-        }
-        out.push_str(line.trim_start());
-        out.push('\n');
-    }
-    Some(out)
+/// Reports whether `dir` carries any rez package definition file.
+fn has_package_definition(dir: &Path) -> bool {
+    ["package.py", "package.yaml", "package.yml"]
+        .iter()
+        .any(|name| dir.join(name).is_file())
 }
 
 /// Renders `paths` for an error message.
@@ -326,9 +317,9 @@ fn default_shell() -> ShellType {
 
 /// Derives the delta that turns `parent` into `environment`.
 ///
-/// [`EnvironmentManager::get_env_diff`] already classifies each variable as
-/// added, modified, or removed, which maps onto the adapter's delta without
-/// re-deriving the comparison.
+/// Each variable is classified as added, modified, or removed. Modified
+/// variables are further narrowed to a prepend or append when — and only when —
+/// the change really is one; see [`push_value_change`].
 fn delta_against(
     parent: &HashMap<String, String>,
     environment: &HashMap<String, String>,
@@ -357,37 +348,95 @@ fn delta_against(
 
 /// Records how a variable moved from `before` to `after`.
 ///
-/// A change that only grew one end is recorded as the matching prepend or
-/// append, so re-applying the delta to a different parent keeps the same
-/// intent. Anything else is a plain set.
+/// Only path-like variables are candidates for a prepend or append, and even
+/// there the comparison is done on **whole segments** rather than on raw string
+/// prefixes and suffixes. Cutting on separators is what makes the difference:
+/// `/bin` becoming `/usr/bin` shares the suffix `/bin`, but `/usr` is not a
+/// path segment, so a naive strip would record a prepend that replays as
+/// `/usr;/bin` instead of `/usr/bin`.
+///
+/// Everything else — including a path-like variable whose change is not a clean
+/// one-sided addition — is recorded as a plain set. A `Set` always replays
+/// correctly, so it is the safe default.
 fn push_value_change(delta: &mut EnvDelta, key: &str, before: &str, after: &str) {
+    let key = env_key(key);
     let sep = separator();
 
-    if let Some(added) = after.strip_suffix(before) {
-        let added = added.strip_suffix(&sep).unwrap_or(added);
-        if !added.is_empty() {
-            delta.push_action(
-                env_key(key),
-                EnvAction::Prepend(added.to_string(), sep.clone()),
-            );
+    if is_path_like(&key) {
+        let before_parts: Vec<&str> = before.split(&sep).collect();
+        let after_parts: Vec<&str> = after.split(&sep).collect();
+
+        if let Some(added) = strip_segments(&before_parts, &after_parts, SegmentSide::Front) {
+            delta.push_action(key, EnvAction::Prepend(added.join(&sep), sep));
+            return;
+        }
+        if let Some(added) = strip_segments(&before_parts, &after_parts, SegmentSide::Back) {
+            delta.push_action(key, EnvAction::Append(added.join(&sep), sep));
             return;
         }
     }
 
-    if let Some(added) = after.strip_prefix(before) {
-        let added = added.strip_prefix(&sep).unwrap_or(added);
-        if !added.is_empty() {
-            delta.push_action(env_key(key), EnvAction::Append(added.to_string(), sep));
-            return;
-        }
-    }
+    delta.push_action(key, EnvAction::Set(after.to_string()));
+}
 
-    delta.push_action(env_key(key), EnvAction::Set(after.to_string()));
+#[derive(Clone, Copy)]
+enum SegmentSide {
+    Front,
+    Back,
+}
+
+/// Returns the segments `after` has that `before` does not, at `side`.
+///
+/// `None` when the shared part is not a clean contiguous run, which rules out
+/// insertions into the middle, deletions, and reorderings.
+fn strip_segments<'a>(
+    before: &[&'a str],
+    after: &[&'a str],
+    side: SegmentSide,
+) -> Option<Vec<&'a str>> {
+    if after.len() <= before.len() {
+        return None;
+    }
+    // The shared run must sit at the far end and be exactly `before`; otherwise
+    // the change is an insertion, a deletion, or a reordering, none of which a
+    // prepend or append can express.
+    let (shared, added) = match side {
+        SegmentSide::Front => after.split_at(after.len() - before.len()),
+        SegmentSide::Back => after.split_at(before.len()),
+    };
+    let (shared, added) = match side {
+        SegmentSide::Front => (added, shared),
+        SegmentSide::Back => (shared, added),
+    };
+    if shared != before {
+        return None;
+    }
+    Some(added.to_vec())
+}
+
+/// Reports whether `key` names a variable that holds a separated path list.
+///
+/// Rez packages prepend to these constantly, so recognizing them is worth it;
+/// guessing the same for arbitrary variables is not.
+fn is_path_like(key: &str) -> bool {
+    matches!(
+        key,
+        "PATH"
+            | "LD_LIBRARY_PATH"
+            | "DYLD_LIBRARY_PATH"
+            | "PYTHONPATH"
+            | "MAYA_PLUG_IN_PATH"
+            | "MAYA_SCRIPT_PATH"
+            | "NUKE_PATH"
+            | "HOUDINI_PATH"
+            | "OCIO"
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Environment;
 
     fn write_package(root: &Path, name: &str, version: &str, commands: &str) -> PathBuf {
         let dir = root.join(name).join(version);
@@ -402,25 +451,53 @@ mod tests {
         dir
     }
 
+    /// `from_path` reads the whole package, so a resolve sees `requires` and
+    /// `tools` and not just the command body. Dropping them would silently
+    /// discard a package's dependency declarations.
     #[test]
-    fn extract_commands_reads_an_indented_block() {
-        let source = "name = \"x\"\n\ndef commands():\n    env.PATH.append('/bin')\n    setenv('FOO', '1')\n";
-        let commands = extract_commands(source).unwrap();
-        assert!(commands.contains("env.PATH.append"));
-        assert!(commands.contains("setenv('FOO'"));
+    fn from_path_captures_requires_tools_and_commands() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("app").join("1.0.0");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("package.py"),
+            "name = \"app\"\nversion = \"1.0.0\"\nrequires = ['py-3.11']\ntools = ['app']\n\n\
+             def commands():\n    setenv('PROBE_APP', '1')\n",
+        )
+        .unwrap();
+
+        let package = load_package(&dir).unwrap().unwrap();
+        assert_eq!(package.requires, vec!["py-3.11".to_string()]);
+        assert_eq!(package.tools, vec!["app".to_string()]);
+        assert!(
+            package
+                .commands
+                .as_deref()
+                .is_some_and(|c| c.contains("PROBE_APP"))
+        );
     }
 
+    /// A directory with no package definition is not a package.
     #[test]
-    fn extract_commands_stops_at_dedent() {
-        let source = "def commands():\n    setenv('A', '1')\n\nname = \"x\"\n";
-        let commands = extract_commands(source).unwrap();
-        assert!(commands.contains("setenv('A'"));
-        assert!(!commands.contains("name ="));
+    fn a_directory_without_a_definition_is_not_a_package() {
+        let temp = tempfile::tempdir().unwrap();
+        assert!(load_package(temp.path()).unwrap().is_none());
     }
 
+    /// package.yaml is supported through the same entry point.
     #[test]
-    fn extract_commands_returns_none_without_a_block() {
-        assert!(extract_commands("name = \"x\"\nversion = \"1\"\n").is_none());
+    fn yaml_packages_load_through_from_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("yam").join("1.0.0");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("package.yaml"),
+            "name: yam\nversion: 1.0.0\ncommands: |\n  setenv('YAM', '1')\n",
+        )
+        .unwrap();
+
+        let package = load_package(&dir).unwrap().unwrap();
+        assert_eq!(package.name, "yam");
     }
 
     #[test]
@@ -508,6 +585,85 @@ mod tests {
         assert_eq!(delta.actions("FOO"), &[EnvAction::Set("after".to_string())]);
     }
 
+    /// Regression: `/bin` -> `/usr/bin` shares the suffix `/bin`, but `/usr` is
+    /// not a path segment. Recording it as a prepend would replay as
+    /// `/usr<sep>/bin`, silently producing a different PATH than the resolve
+    /// actually produced.
+    #[test]
+    fn a_shared_suffix_that_is_not_a_segment_is_a_set() {
+        let mut delta = EnvDelta::new();
+        let sep = separator();
+        push_value_change(&mut delta, "PATH", "/bin", "/usr/bin");
+        assert_eq!(
+            delta.actions("PATH"),
+            &[EnvAction::Set("/usr/bin".to_string())]
+        );
+        let parent = Environment::from([("PATH".to_string(), "/bin".to_string())]);
+        assert_eq!(
+            delta.apply(&parent).get("PATH").map(String::as_str),
+            Some("/usr/bin")
+        );
+        let _ = sep;
+    }
+
+    /// An insertion into the middle of a path list is not expressible as a
+    /// prepend or append, so it must fall back to a set.
+    #[test]
+    fn a_middle_insertion_is_a_set() {
+        let mut delta = EnvDelta::new();
+        let sep = separator();
+        push_value_change(
+            &mut delta,
+            "PATH",
+            &format!("/a{}/c", sep),
+            &format!("/a{}/b{}/c", sep, sep),
+        );
+        assert_eq!(
+            delta.actions("PATH"),
+            &[EnvAction::Set(format!("/a{}/b{}/c", sep, sep))]
+        );
+    }
+
+    /// A shorter value is neither a prepend nor an append.
+    #[test]
+    fn a_shrinking_path_list_is_a_set() {
+        let mut delta = EnvDelta::new();
+        let sep = separator();
+        push_value_change(&mut delta, "PATH", &format!("/a{}/b", sep), "/a");
+        assert_eq!(delta.actions("PATH"), &[EnvAction::Set("/a".to_string())]);
+    }
+
+    /// Only known path-like variables get the prepend/append treatment; an
+    /// arbitrary variable that happens to share a prefix stays a set.
+    #[test]
+    fn non_path_like_keys_are_always_a_set() {
+        let mut delta = EnvDelta::new();
+        push_value_change(&mut delta, "SOME_VAR", "abc", "abc/def");
+        assert_eq!(
+            delta.actions("SOME_VAR"),
+            &[EnvAction::Set("abc/def".to_string())]
+        );
+    }
+
+    /// A prepend recorded against one parent must produce the same value when
+    /// replayed against a different one.
+    #[test]
+    fn a_recorded_prepend_replays_onto_a_different_parent() {
+        let mut delta = EnvDelta::new();
+        let sep = separator();
+        push_value_change(
+            &mut delta,
+            "PATH",
+            "/usr/bin",
+            &format!("/opt/pkg/bin{}/usr/bin", sep),
+        );
+        let other = Environment::from([("PATH".to_string(), "/other/bin".to_string())]);
+        assert_eq!(
+            delta.apply(&other).get("PATH").map(String::as_str),
+            Some(format!("/opt/pkg/bin{}/other/bin", sep).as_str())
+        );
+    }
+
     #[test]
     fn delta_covers_added_modified_and_removed() {
         let parent = HashMap::from([
@@ -578,7 +734,46 @@ mod tests {
         );
     }
 
-    /// The highest version wins, which is what a bare `rez-env <name>` means.
+    /// Regression: a pinned request must not silently resolve to a different
+    /// version. Handing back 2.0.0 for `dummy-1.0.0` is the failure this class
+    /// of tool can never have, because nothing downstream reports it.
+    #[test]
+    fn a_pinned_request_resolves_to_that_version() {
+        let temp = tempfile::tempdir().unwrap();
+        write_package(temp.path(), "dummy", "1.0.0", "setenv('DUMMY', 'one')");
+        write_package(temp.path(), "dummy", "2.0.0", "setenv('DUMMY', 'two')");
+
+        let mut request = ResolveRequest::new(["dummy-1.0.0"]);
+        request.package_paths = Some(vec![temp.path().to_path_buf()]);
+
+        let resolved = resolve_env(&request).unwrap();
+        assert_eq!(
+            resolved.environment.get("DUMMY").map(String::as_str),
+            Some("one")
+        );
+    }
+
+    /// A constraint that excludes every candidate is an error, not a silent
+    /// fallback to whatever version happens to exist.
+    #[test]
+    fn an_unsatisfiable_constraint_is_reported() {
+        let temp = tempfile::tempdir().unwrap();
+        write_package(temp.path(), "dummy", "1.0.0", "setenv('DUMMY', 'one')");
+
+        let mut request = ResolveRequest::new(["dummy-9.9.9"]);
+        request.package_paths = Some(vec![temp.path().to_path_buf()]);
+
+        let err = resolve_env(&request).unwrap_err();
+        match err {
+            Error::Resolve { request, reason } => {
+                assert_eq!(request, "dummy-9.9.9");
+                assert!(reason.contains("matching"), "reason was: {reason}");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    /// A bare request still takes the highest version.
     #[test]
     fn the_highest_version_is_selected() {
         let temp = tempfile::tempdir().unwrap();
@@ -596,21 +791,26 @@ mod tests {
         );
     }
 
-    /// A package whose Rex commands the interpreter rejects must surface as a
-    /// resolve error, not a panic.
+    /// `Package::from_path` drops command bodies it cannot parse, so a package
+    /// whose commands are not valid Rex resolves to an environment that simply
+    /// has nothing extra in it.
+    ///
+    /// That is upstream behaviour rather than something the adapter chooses,
+    /// and it is the one place a resolve can under-contribute without failing.
+    /// The test pins the behaviour so a future change either way is visible,
+    /// and asserts on a single key rather than the whole environment — printing
+    /// the full map would dump the host's variables, secrets included.
     #[test]
-    fn invalid_rex_commands_are_reported() {
+    fn unparseable_commands_contribute_nothing_rather_than_failing() {
         let temp = tempfile::tempdir().unwrap();
         write_package(temp.path(), "broken", "1.0.0", "this is not rex");
 
         let mut request = ResolveRequest::new(["broken"]);
         request.package_paths = Some(vec![temp.path().to_path_buf()]);
 
-        let err = resolve_env(&request).unwrap_err();
-        match err {
-            Error::Resolve { reason, .. } => assert!(reason.contains("Rex")),
-            other => panic!("unexpected error: {other:?}"),
-        }
+        let resolved = resolve_env(&request).unwrap();
+        assert_eq!(resolved.resolved_requests, vec!["broken".to_string()]);
+        assert!(!resolved.environment.contains_key("BROKEN_ONLY"));
     }
 
     /// The failure path: a request with no matching package reports which
@@ -647,14 +847,38 @@ mod tests {
 
     /// Without any package path configuration the resolve says so, rather than
     /// silently returning an empty environment.
+    /// The assertion depends on `REZ_PACKAGES_PATH` being unset, so the test
+    /// controls it rather than inheriting whichever value the runner happens to
+    /// have — otherwise a runner that exports it makes this silently pass for
+    /// the wrong reason.
+    ///
+    /// Environment mutation is not thread-safe, so this test is the one place
+    /// in the module that cannot run alongside the others.
     #[test]
     fn no_package_paths_is_reported() {
-        let request = ResolveRequest::new(["python"]);
-        let err = resolve_env(&request).unwrap_err();
-        match err {
-            Error::Resolve { reason, .. } => assert!(reason.contains("no package paths")),
-            other => panic!("unexpected error: {other:?}"),
+        let guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let previous = std::env::var_os("REZ_PACKAGES_PATH");
+        // SAFETY: no other thread in this test binary reads this variable
+        // while the guard below is held.
+        unsafe { std::env::remove_var("REZ_PACKAGES_PATH") };
+
+        let result = resolve_env(&ResolveRequest::new(["python"]));
+
+        if let Some(value) = previous {
+            unsafe { std::env::set_var("REZ_PACKAGES_PATH", value) };
         }
+        drop(guard);
+
+        match result {
+            Err(Error::Resolve { reason, .. }) => assert!(reason.contains("no package paths")),
+            other => panic!("expected a resolve error, got: {other:?}"),
+        }
+    }
+
+    /// Serializes tests that mutate the process environment.
+    fn env_lock() -> &'static std::sync::Mutex<()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
     }
 
     #[test]
