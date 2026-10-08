@@ -15,21 +15,23 @@ The environment model (`EnvDelta`, `ResolvedEnv`) is implemented and tested inde
 
 ## Installation
 
-This crate has **not been published to crates.io yet**, so a version requirement will not resolve. Until the first release, depend on it from git:
-
-```toml
-[dependencies]
-vx-rez-adapter = { git = "https://github.com/vx-org/vx-rez-adapter" }
-```
-
-Once published, the registry form will be:
-
 ```toml
 [dependencies]
 vx-rez-adapter = "0.1.0"
 ```
 
 Requires Rust 1.95.0 or newer (edition 2024).
+
+To depend on unreleased changes, use the git form. Prefer a pinned revision
+over a branch so the build stays reproducible:
+
+```toml
+[dependencies]
+vx-rez-adapter = { git = "https://github.com/vx-org/vx-rez-adapter", rev = "<sha>" }
+```
+
+The git form exists for local development against unreleased work; releases
+are consumed from crates.io.
 
 ## Usage
 

@@ -73,3 +73,21 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo package --locked
+
+  publish-dry-run:
+    name: Publish dry run
+    runs-on: ubuntu-latest
+    # `cargo publish --dry-run` verifies what `cargo package` cannot: that the
+    # crate resolves and builds the way it would as a published registry
+    # dependency, with no path-only or git-only files available. Running it on
+    # every push is wasteful, so it is scoped to the commits that precede a
+    # release -- tags and main.
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Verify the crate publishes
+        # No registry token: --dry-run never contacts crates.io to upload, and
+        # it must stay that way -- a real publish is a gated action.
+        run: cargo publish --dry-run --locked

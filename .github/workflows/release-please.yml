@@ -1,0 +1,34 @@
+name: Release Please
+
+# Opens and maintains a release PR from Conventional Commits on main, and
+# creates the tag + GitHub Release when that PR is merged.
+#
+# This repository is a library crate, so releasing is two separate steps:
+#   1. this workflow -- version bump, CHANGELOG, tag, GitHub Release;
+#   2. `cargo publish` to crates.io -- deliberately NOT automated here.
+#
+# Publishing is irreversible: a crate name is claimed permanently and versions
+# cannot be deleted, only yanked. So the tag is created automatically but the
+# registry upload stays a manual, authorized action until the release process
+# is agreed. `ci.yml` runs `cargo publish --dry-run` on tags so a tag is always
+# known to be publishable before anyone runs the real command.
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v5
+        id: release
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

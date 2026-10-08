@@ -7,6 +7,8 @@ authors = ["LongHao <hal.long@outlook.com>"]
 description = "Rust adapter integrating vx with rez-next package environments"
 license = "Apache-2.0"
 repository = "https://github.com/vx-org/vx-rez-adapter"
+documentation = "https://docs.rs/vx-rez-adapter"
+readme = "README.md"
 keywords = ["rez", "rez-next", "vx", "package-manager", "environment"]
 categories = ["development-tools"]
 
@@ -14,7 +16,6 @@ categories = ["development-tools"]
 rez-next-context = "0.3.9"
 rez-next-package = "0.3.9"
 rez-next-version = "0.3.9"
-serde_yaml = "0.9.34"
 tokio = { version = "1.53.2", features = ["rt", "macros"] }
 
 [dev-dependencies]
