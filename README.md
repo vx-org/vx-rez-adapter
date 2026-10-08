@@ -1,17 +1,8 @@
 # vx-rez-adapter
 
-Rust adapter integrating [vx](https://github.com/vx-org) with [rez-next](https://github.com/loonghao/rez-next) package environments.
+Rust bridge from [vx](https://github.com/vx-org) to [Rez Next](https://github.com/loonghao/rez-next) package environments.
 
-`vx` needs to resolve a rez package environment and then run a tool inside it. This crate is that bridge: it turns rez package requests into a concrete environment, and launches a program with that environment applied.
-
-## Status
-
-Both core verbs are implemented on top of the `rez-next` SDK:
-
-- **`resolve_env`** looks packages up on disk and runs their Rex commands through `rez-next-context`, returning a `ResolvedEnv`.
-- **`launch`** spawns a program with that environment applied and reports its exit status.
-
-The environment model (`EnvDelta`, `ResolvedEnv`) is implemented and tested independently of the resolve, so it can be used on its own.
+The adapter delegates repository lookup, dependency resolution, variant selection, package materialization, and Rex activation to `rez-next-runtime`. It converts the SDK result into a deterministic environment and delta, then launches the requested program directly.
 
 ## Installation
 
@@ -20,219 +11,121 @@ The environment model (`EnvDelta`, `ResolvedEnv`) is implemented and tested inde
 vx-rez-adapter = "0.1.0"
 ```
 
-Requires Rust 1.95.0 or newer (edition 2024).
+Requires Rust 1.95.0 or newer. The runtime SDK dependency is pinned to `rez-next-runtime = "=0.3.9"` from crates.io; no Git or local path dependency is needed by consumers.
 
-To depend on unreleased changes, use the git form. Prefer a pinned revision
-over a branch so the build stays reproducible:
-
-```toml
-[dependencies]
-vx-rez-adapter = { git = "https://github.com/vx-org/vx-rez-adapter", rev = "<sha>" }
-```
-
-The git form exists for local development against unreleased work; releases
-are consumed from crates.io.
-
-## Usage
-
-### Resolving an environment
-
-Packages are found under `REZ_PACKAGES_PATH`, or under an explicit override:
+## Resolve an environment
 
 ```rust
-use vx_rez_adapter::{RezAdapter, ResolveRequest};
+use vx_rez_adapter::{ResolveRequest, RezAdapter};
 
-let adapter = RezAdapter::new();
-
-// Uses REZ_PACKAGES_PATH, or an explicit override:
-let request = ResolveRequest::new(["python-3.11"])
+let request = ResolveRequest::new(["application-1.0.0"])
     .package_paths(["/srv/packages"]);
+let resolved = RezAdapter::new().resolve_env(&request)?;
 
-let resolved = adapter.resolve_env(&request)?;
-println!("PATH={}", resolved.environment["PATH"]);
-println!("resolved {} package(s)", resolved.package_roots.len());
+// Includes roots of transitive dependencies and selected variants.
+println!("resolved {} package roots", resolved.package_roots.len());
+# Ok::<(), vx_rez_adapter::Error>(())
 ```
 
-Packages are laid out the way rez expects them:
+Package repositories use Rez's `<repository>/<name>/<version>/package.py` layout. YAML package definitions are also supported by the SDK. If `package_paths` is omitted, the adapter reads `REZ_PACKAGES_PATH` using the host path separator.
 
-```
-<package_path>/<name>/<version>/package.py
-```
-
-A bare request like `"python"` selects the highest version found. A request that
-carries a version constraint — `"python-3.11"`, `"python-3.11+"`,
-`"python<4"` — selects the highest version **matching that constraint**. A
-constraint that matches nothing is an error; the resolve never quietly hands
-back a version you did not ask for.
-
-### Launching a tool inside a resolved environment
+Explicit and implicit requests participate in the same dependency solve. Dependencies contribute their commands to the environment. Incompatible versions, missing requirements, and invalid selectors return a diagnostic instead of a partial environment.
 
 ```rust
-use vx_rez_adapter::{LaunchRequest, RezAdapter, ResolveRequest};
+use vx_rez_adapter::{Environment, ResolveRequest};
+
+let request = ResolveRequest::new(["application"])
+    .package_paths(["/srv/packages"])
+    .implicit_requests(["shared-tools-2.0.0"])
+    .target("windows", "AMD64")
+    .parent_environment(Environment::new());
+```
+
+`target` adds platform and architecture constraints to variant selection. The repository must provide the corresponding `platform` and `arch` packages. Without an explicit target, the adapter adds no target constraints. The SDK accepts `windows`, `linux`, and `osx`, with `macos` and `darwin` normalized to `osx`.
+
+`parent_environment` supplies the exact base used for activation. An explicit empty map excludes ambient variables; omitting it starts from the current process environment. On Windows, variable names are normalized to uppercase before activation so `Path` and `PATH` cannot create competing definitions.
+
+### Async callers
+
+```rust
+use vx_rez_adapter::{ResolveRequest, RezAdapter};
+
+# async fn example() -> Result<(), vx_rez_adapter::Error> {
+let request = ResolveRequest::new(["application"])
+    .package_paths(["/srv/packages"]);
+let resolved = RezAdapter::new().resolve_env_async(&request).await?;
+# Ok(())
+# }
+```
+
+Use `resolve_env_async` within Tokio. The synchronous `resolve_env` creates a runtime for synchronous callers and returns a diagnostic when an existing runtime is detected, avoiding a nested-runtime panic.
+
+## Launch a command
+
+```rust
+use vx_rez_adapter::{LaunchRequest, ResolveRequest, RezAdapter};
 
 let adapter = RezAdapter::new();
-let resolved = adapter.resolve_env(&ResolveRequest::new(["python-3.11"]))?;
-
+let resolved = adapter.resolve_env(
+    &ResolveRequest::new(["python-3.11"]).package_paths(["/srv/packages"]),
+)?;
 let outcome = adapter.launch(
     &LaunchRequest::new("python")
-        .arg("--version")
+        .args(["-c", "print('a value with spaces')"])
         .environment(resolved.environment),
 )?;
-
 assert!(outcome.success());
-println!("exit code: {:?}", outcome.code);
+# Ok::<(), vx_rez_adapter::Error>(())
 ```
 
-The child inherits this process's stdin, stdout, and stderr, so an interactive tool behaves the way a user expects. On Windows the child is created with `CREATE_NO_WINDOW`, so a GUI-launched tool does not open an extra console window.
+Arguments are forwarded directly to the executable without a shell. The child inherits stdin, stdout, and stderr. Calling `.environment(map)` injects exactly that map, including an empty map. A launch with no environment supplied inherits the current process environment. On Windows, the adapter prevents an additional console window.
 
-**A program that runs and exits non-zero is a successful launch** — you get `Ok(outcome)` with `outcome.success() == false`. Only a failure to *start* the program is an `Err`.
+With an explicit environment, a bare program is located only through its supplied PATH and Windows PATHEXT, then launched by absolute path. Missing programs fail instead of falling through to an ambient runtime. Explicit executable paths also work with an empty environment.
 
-This matches `std::process::Command::status()`: `Ok` means "the process was started", `success()` means "it did its job". **Always check `success()`** — inspecting only the `Result` makes a tool that ran and failed look identical to one that ran and succeeded. The two are not the same, and they are usually handled differently.
+A child that starts and exits nonzero returns `Ok(outcome)` with `success() == false`. Only failure to start returns `Error::Spawn`. Unix signal termination is exposed through `outcome.signal`.
 
-```rust
-use vx_rez_adapter::LaunchRequest;
+The runnable consumer example accepts package requests before `--` and forwards the program and all arguments after it:
 
-// Runs, exits 1 -> Ok(outcome) with success() == false
-let outcome = RezAdapter::new().launch(
-    &LaunchRequest::new("python").arg("-c").arg("raise SystemExit(1)"),
-)?;
-assert!(!outcome.success());
-
-// Cannot be started at all -> Err(Error::Spawn { .. })
-let err = RezAdapter::new().launch(&LaunchRequest::new("no-such-tool"));
-assert!(err.is_err());
+```sh
+vx cargo run --example resolve_and_launch -- --packages-path /srv/packages application-1.0.0 -- application --verbose "a value"
 ```
 
-On unix, a child killed by a signal reports `code: None` and `signal: Some(n)`, so a caller can tell *how* the child died rather than only that it failed.
+Repeat `--packages-path` to add repositories, or omit it to use `REZ_PACKAGES_PATH`. Resolution and launch failures print diagnostics and exit nonzero; the program's exit status is propagated.
 
-### Working with the environment model
+## Environment delta
 
-The environment model is available without a resolve:
+`ResolvedEnv` includes the full `Environment` (`BTreeMap<String, String>`), the requested selectors, roots of every resolved package, and an `EnvDelta` against the activation parent. The delta replays to the exact generated environment against that same parent.
+
+The standalone delta model supports ordered `Set`, `Unset`, `Prepend`, `Append`, and `SetIfEmpty` actions, including multiple actions per variable. Generated deltas preserve simple prepends and appends for path variables when whole segments match. A shared string suffix, insertion into the middle, or replacement becomes a `Set`.
 
 ```rust
-use std::collections::BTreeMap;
-use vx_rez_adapter::{EnvAction, EnvDelta, ResolvedEnv, env_key, path_separator};
+use vx_rez_adapter::{EnvAction, EnvDelta, Environment, path_separator};
 
-let sep = path_separator();
 let mut delta = EnvDelta::new();
-
-// Every package in a resolve emits its own commands, so a delta holds a *list*
-// of actions per variable. These two both survive:
-delta.push_action("PATH", EnvAction::Prepend("/pkg/a/bin".to_string(), sep.to_string()));
-delta.push_action("PATH", EnvAction::Prepend("/pkg/b/bin".to_string(), sep.to_string()));
-delta.push_action("REZ_USED", EnvAction::Set("1".to_string()));
-delta.push_action("OLD_VAR", EnvAction::Unset);
-
-let parent = BTreeMap::from([("PATH".to_string(), "/usr/bin".to_string())]);
-let resolved = ResolvedEnv::from_delta(delta, &parent);
-
-// Later prepends land in front, matching rez activation order.
-let path = &resolved.environment["PATH"];
-assert!(path.starts_with(&format!("/pkg/b/bin{sep}/pkg/a/bin{sep}")));
+delta.push_action("PATH", EnvAction::Prepend("/pkg/bin".into(), path_separator().into()));
+let parent = Environment::from([("PATH".into(), "/usr/bin".into())]);
+let environment = delta.apply(&parent);
 ```
 
-A resolve in rez is a *difference* against a parent environment, not a bare set
-of variables — paths get prepended, variables get overridden, some get unset.
-`EnvDelta` models that difference with five actions (`Unset`, `Set`, `Prepend`,
-`Append`, `SetIfEmpty`), and `ResolvedEnv` keeps both the rendered environment
-and the delta, so a caller can diff a resolve or re-apply it against a different
-parent.
+## Diagnostics
 
-Three properties matter for correctness, and each is covered by tests:
+`Error::Resolve` carries the requested selectors and the SDK diagnostic. `Error::PackagePath` identifies an invalid repository path. `Error::Spawn` identifies the executable that could not start; repository and spawn errors expose the underlying I/O error through `Error::source()`.
 
-- **Multiple actions per variable.** Nearly every rez package prepends to
-  `PATH`. A delta that kept only the last action for a variable would silently
-  drop the others. Actions accumulate in insertion order, with later prepends
-  landing in front of earlier ones.
-- **Per-action separator.** `Prepend` and `Append` carry their own separator
-  (`(value, separator)`), matching the upstream `rez-next-context` contract,
-  rather than inferring one from the host platform.
-- **Case-folded keys on Windows.** Windows environment variables are
-  case-insensitive, so `Path` and `PATH` name one variable. Build keys with
-  `env_key` to avoid handing a child two competing definitions.
-
-When a resolve produces a delta, a changed variable is recorded as a `Prepend`
-or `Append` only when the change really is one — and only for path-like
-variables (`PATH`, `LD_LIBRARY_PATH`, `PYTHONPATH`, and similar). The comparison
-splits on the separator and compares whole segments, so `/bin` becoming
-`/usr/bin` is a `Set`, not a prepend of `/usr`. Anything else is a `Set`, which
-always replays correctly.
-
-## Error handling
-
-Every failure is a value, never a panic. The resolve path reports which request
-failed and why:
-
-```rust
-use vx_rez_adapter::{Error, RezAdapter, ResolveRequest};
-
-let err = RezAdapter::new()
-    .resolve_env(&ResolveRequest::new(["no-such-package"]))
-    .unwrap_err();
-
-match err {
-    Error::Resolve { request, reason } => {
-        eprintln!("could not resolve `{request}`: {reason}");
-    }
-    Error::PackagePath { path, .. } => {
-        eprintln!("unusable package path: {}", path.display());
-    }
-    Error::Spawn { program, .. } => {
-        eprintln!("could not start `{program}`");
-    }
-    other => eprintln!("{other}"),
-}
-```
-
-One case is worth knowing about: a package whose `def commands()` body the
-upstream loader cannot parse contributes **nothing** to the environment rather
-than failing the resolve. That is `rez-next`'s behaviour, surfaced here so it is
-not mistaken for a silent success of your own code.
-
-`Error::source()` carries the underlying I/O error for `PackagePath` and
-`Spawn`, so a caller can inspect the OS-level cause.
-
-## Public API
-
-| Type | Purpose |
-| --- | --- |
-| `RezAdapter` | Top-level entry point: `resolve_env` and `launch` |
-| `ResolveRequest` | Package requests plus optional implicit requests and package paths |
-| `EnvDelta` | Ordered set of variable changes a resolve applies |
-| `EnvAction` | One change: `Unset`, `Set`, `Prepend`, `Append`, `SetIfEmpty` |
-| `ResolvedEnv` | Rendered environment, the delta behind it, and package roots |
-| `LaunchRequest` | Program, arguments, environment, and working directory |
-| `LaunchOutcome` | Exit code and terminating signal of a finished child |
-| `Environment` | Alias for `BTreeMap<String, String>`; sorted for deterministic output |
-| `env_key` | Normalizes a variable name for use as a map key |
-| `path_separator` | Host path list separator (`:` on unix, `;` on Windows) |
-| `which` | Locates a program on `PATH` without spawning it |
-| `Error` / `Result` | Adapter error and result types |
-
-The data-oriented public types are `#[non_exhaustive]`, so new fields and
-variants can be added without breaking downstream code.
-
-## Examples
-
-```bash
-REZ_PACKAGES_PATH=/srv/packages cargo run --example resolve_and_launch
-```
-
-The example resolves a package, launches a tool inside it, and demonstrates the
-failure path. It degrades to a readable message when no repository is
-configured, so it stays runnable in a bare checkout.
+The SDK owns package parsing and Rex semantics. The adapter does not substitute a simplified resolver or interpreter when resolution fails.
 
 ## Development
 
-```bash
-cargo build
-cargo test
-cargo clippy --workspace --all-targets -- -D warnings
-cargo fmt --all -- --check
+```sh
+vx cargo fmt --all -- --check
+vx cargo clippy --workspace --all-targets --all-features -- -D warnings
+vx cargo test --workspace --all-targets
+vx cargo test --workspace --all-targets --all-features
+vx cargo test --workspace --doc --all-features
+vx cargo package --locked
 ```
 
-CI runs the same checks on Linux, macOS, and Windows.
+CI tests Linux, macOS, and Windows and verifies the packaged crate using registry dependencies. Local SDK patches may be used during development, but they do not establish registry publication or consumer acceptance.
 
 ## License
 
-Licensed under the [Apache License, Version 2.0](./LICENSE).
+[Apache License, Version 2.0](./LICENSE).

@@ -18,8 +18,8 @@ use crate::Environment;
 
 /// How a single environment variable is modified by one package command.
 ///
-/// The variants mirror the upstream `rez-next-context` contract
-/// (`EnvOperation`) so stage 2 can convert between the two without loss.
+/// The variants express the operations a caller can replay against a parent
+/// environment. SDK resolves are converted from their rendered environment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum EnvAction {
@@ -219,9 +219,9 @@ pub struct ResolvedEnv {
     /// The delta against the parent environment, kept so callers can diff or
     /// re-apply the resolve against a different parent.
     pub delta: EnvDelta,
-    /// The package requests that were resolved, in resolve order.
+    /// Explicit and implicit request selectors passed to the SDK, in input order.
     pub resolved_requests: Vec<String>,
-    /// Roots of the packages that took part in the resolve, if known.
+    /// Roots of all packages and selected variants, including dependencies.
     pub package_roots: Vec<PathBuf>,
 }
 
