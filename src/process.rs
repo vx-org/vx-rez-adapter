@@ -4,7 +4,9 @@
 //! terminal, the parent has to report the child's real exit status, and on
 //! Windows a launched tool must not pop a console window of its own.
 
+use std::ffi::OsStr;
 use std::io;
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 
 use crate::error::{Error, Result};
@@ -15,6 +17,8 @@ use crate::{LaunchOutcome, LaunchRequest};
 /// The child inherits the parent's stdin, stdout, and stderr so an interactive
 /// tool behaves the way a user expects. Its exit code and terminating signal
 /// are reported in the returned [`LaunchOutcome`].
+/// With an exact environment, a bare program is found only on its supplied
+/// `PATH`; explicit program paths remain directly launchable without `PATH`.
 ///
 /// # Errors
 ///
@@ -22,7 +26,7 @@ use crate::{LaunchOutcome, LaunchRequest};
 /// starts and then exits non-zero is a successful launch with
 /// [`LaunchOutcome::success`] reporting `false`.
 pub fn launch(request: &LaunchRequest) -> Result<LaunchOutcome> {
-    let mut command = build_command(request);
+    let mut command = build_command(request)?;
     let status = command.status().map_err(|source| Error::Spawn {
         program: request.program.display().to_string(),
         source,
@@ -31,15 +35,16 @@ pub fn launch(request: &LaunchRequest) -> Result<LaunchOutcome> {
 }
 
 /// Builds the platform-specific command for `request`.
-fn build_command(request: &LaunchRequest) -> Command {
-    let mut command = Command::new(&request.program);
+fn build_command(request: &LaunchRequest) -> Result<Command> {
+    let program = launch_program(request)?;
+    let mut command = Command::new(program);
     command
         .args(&request.args)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
 
-    if !request.environment.is_empty() {
+    if !request.inherit_environment || !request.environment.is_empty() {
         command.env_clear();
         for (name, value) in &request.environment {
             command.env(name, value);
@@ -59,7 +64,58 @@ fn build_command(request: &LaunchRequest) -> Command {
         command.creation_flags(CREATE_NO_WINDOW);
     }
 
-    command
+    Ok(command)
+}
+
+/// Exact environments must also control executable discovery. In particular,
+/// Windows can search the parent's PATH despite `Command::env_clear()`.
+fn launch_program(request: &LaunchRequest) -> Result<PathBuf> {
+    let exact_environment = !request.inherit_environment || !request.environment.is_empty();
+    if !exact_environment || !is_bare_program(&request.program) {
+        return Ok(request.program.clone());
+    }
+
+    let current_dir = std::env::current_dir().map_err(|source| Error::Spawn {
+        program: request.program.display().to_string(),
+        source,
+    })?;
+    let working_dir = request
+        .working_dir
+        .as_ref()
+        .map_or_else(|| current_dir.clone(), |dir| current_dir.join(dir));
+    let path = environment_value(request, "PATH").unwrap_or_default();
+    let pathext = environment_value(request, "PATHEXT");
+    find_on_path(
+        &request.program,
+        OsStr::new(path),
+        pathext.map(OsStr::new),
+        &working_dir,
+    )
+    .ok_or_else(|| missing_program(&request.program))
+}
+
+fn is_bare_program(program: &Path) -> bool {
+    let mut components = program.components();
+    matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none()
+}
+
+fn environment_value<'a>(request: &'a LaunchRequest, name: &str) -> Option<&'a str> {
+    #[cfg(windows)]
+    {
+        // Match Command's last assignment when callers supply differently cased
+        // Windows keys in the ordered map.
+        request
+            .environment
+            .iter()
+            .rev()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
+    }
+
+    #[cfg(not(windows))]
+    {
+        request.environment.get(name).map(String::as_str)
+    }
 }
 
 /// Converts a finished child's status into a [`LaunchOutcome`].
@@ -95,21 +151,73 @@ fn outcome_of(status: ExitStatus) -> LaunchOutcome {
 ///
 /// Returns [`Error::Spawn`] when the program cannot be found or the calling
 /// process lacks permission to execute it.
-pub fn which(program: &str) -> Result<std::path::PathBuf> {
+pub fn which(program: &str) -> Result<PathBuf> {
     let path = std::env::var_os("PATH").unwrap_or_default();
-    for dir in std::env::split_paths(&path) {
+    let pathext = std::env::var_os("PATHEXT");
+    let current_dir = std::env::current_dir().map_err(|source| Error::Spawn {
+        program: program.to_owned(),
+        source,
+    })?;
+    find_on_path(Path::new(program), &path, pathext.as_deref(), &current_dir)
+        .ok_or_else(|| missing_program(Path::new(program)))
+}
+
+fn find_on_path(
+    program: &Path,
+    path: &OsStr,
+    pathext: Option<&OsStr>,
+    working_dir: &Path,
+) -> Option<PathBuf> {
+    #[cfg(not(windows))]
+    let _ = pathext;
+
+    if path.is_empty() {
+        return None;
+    }
+    for dir in std::env::split_paths(path) {
+        if dir.as_os_str().is_empty() {
+            continue;
+        }
+        let dir = working_dir.join(dir);
         let candidate = dir.join(program);
         if is_executable(&candidate) {
-            return Ok(candidate);
+            return Some(candidate);
+        }
+
+        #[cfg(windows)]
+        if program.extension().is_none() {
+            // CreateProcess supports the native .exe suffix independently of
+            // PATHEXT; additional configured executable suffixes are retained.
+            let extensions = pathext
+                .and_then(OsStr::to_str)
+                .unwrap_or(".COM;.EXE;.BAT;.CMD");
+            for extension in std::iter::once(".exe").chain(extensions.split(';')) {
+                if !extension.starts_with('.')
+                    || extension.contains(['/', '\\', ':'])
+                    || extension.len() == 1
+                {
+                    continue;
+                }
+                let mut executable = candidate.as_os_str().to_os_string();
+                executable.push(extension);
+                let executable = PathBuf::from(executable);
+                if is_executable(&executable) {
+                    return Some(executable);
+                }
+            }
         }
     }
-    Err(Error::Spawn {
-        program: program.to_string(),
+    None
+}
+
+fn missing_program(program: &Path) -> Error {
+    Error::Spawn {
+        program: program.display().to_string(),
         source: io::Error::new(
             io::ErrorKind::NotFound,
-            format!("`{program}` was not found on PATH"),
+            format!("`{}` was not found on PATH", program.display()),
         ),
-    })
+    }
 }
 
 /// Reports whether `candidate` is a file this process can run.
@@ -189,7 +297,8 @@ mod tests {
         let mut environment = Environment::new();
         environment.insert(marker.clone(), "expected".to_string());
 
-        let request = LaunchRequest::new(shell())
+        let shell_path = which(if cfg!(windows) { "cmd.exe" } else { shell() }).unwrap();
+        let request = LaunchRequest::new(shell_path)
             .arg(shell_arg())
             .arg(script)
             .environment(environment);

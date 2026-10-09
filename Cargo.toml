@@ -13,12 +13,11 @@ keywords = ["rez", "rez-next", "vx", "package-manager", "environment"]
 categories = ["development-tools"]
 
 [dependencies]
-rez-next-context = "0.3.9"
-rez-next-package = "0.3.9"
-rez-next-version = "0.3.9"
+rez-next-runtime = "=0.3.9"
 tokio = { version = "1.53.2", features = ["rt", "macros"] }
 
 [dev-dependencies]
+rstest = "0.27"
 tempfile = "3"
 
 [[example]]

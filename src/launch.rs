@@ -8,16 +8,19 @@ use std::path::{Path, PathBuf};
 use crate::Environment;
 
 /// A request to launch one program inside a prepared environment.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct LaunchRequest {
     /// Program to execute. Resolved through `PATH` when not absolute.
     pub program: PathBuf,
     /// Arguments passed to the program, excluding `program` itself.
     pub args: Vec<String>,
-    /// Full environment handed to the child. When empty the child inherits the
-    /// parent process environment.
+    /// Full environment handed to the child. Use [`Self::environment`] to
+    /// inject an exact map, including an empty map.
     pub environment: Environment,
+    /// Whether to inherit the parent when no environment entries are supplied.
+    /// Defaults to true; [`Self::environment`] sets this to false.
+    pub inherit_environment: bool,
     /// Working directory of the child. When `None` the parent's is inherited.
     pub working_dir: Option<PathBuf>,
 }
@@ -30,6 +33,7 @@ impl LaunchRequest {
             program: program.into(),
             args: Vec::new(),
             environment: Environment::new(),
+            inherit_environment: true,
             working_dir: None,
         }
     }
@@ -56,6 +60,7 @@ impl LaunchRequest {
     #[must_use]
     pub fn environment(mut self, environment: Environment) -> Self {
         self.environment = environment;
+        self.inherit_environment = false;
         self
     }
 
@@ -64,6 +69,12 @@ impl LaunchRequest {
     pub fn working_dir(mut self, dir: impl AsRef<Path>) -> Self {
         self.working_dir = Some(dir.as_ref().to_path_buf());
         self
+    }
+}
+
+impl Default for LaunchRequest {
+    fn default() -> Self {
+        Self::new(PathBuf::new())
     }
 }
 
