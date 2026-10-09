@@ -40,6 +40,56 @@ dependencies = [
 ]
 
 [[package]]
+name = "anstream"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "824a212faf96e9acacdbd09febd34438f8f711fb84e09a8916013cd7815ca28d"
+dependencies = [
+ "anstyle",
+ "anstyle-parse",
+ "anstyle-query",
+ "anstyle-wincon",
+ "colorchoice",
+ "is_terminal_polyfill",
+ "utf8parse",
+]
+
+[[package]]
+name = "anstyle"
+version = "1.0.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "940b3a0ca603d1eade50a4846a2afffd5ef57a9feac2c0e2ec2e14f9ead76000"
+
+[[package]]
+name = "anstyle-parse"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52ce7f38b242319f7cabaa6813055467063ecdc9d355bbb4ce0c68908cd8130e"
+dependencies = [
+ "utf8parse",
+]
+
+[[package]]
+name = "anstyle-query"
+version = "1.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
+dependencies = [
+ "windows-sys",
+]
+
+[[package]]
+name = "anstyle-wincon"
+version = "3.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
+dependencies = [
+ "anstyle",
+ "once_cell_polyfill",
+ "windows-sys",
+]
+
+[[package]]
 name = "anyhow"
 version = "1.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -144,6 +194,52 @@ dependencies = [
  "wasm-bindgen",
  "windows-link",
 ]
+
+[[package]]
+name = "clap"
+version = "4.6.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa8876b300ab35ba921adea3dfd70157a46249b33f95c9084ae5709785478946"
+dependencies = [
+ "clap_builder",
+ "clap_derive",
+]
+
+[[package]]
+name = "clap_builder"
+version = "4.6.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec0797fb7aeb1406c84efac526901f7ec3ead2124f946b494e72879d4b54704d"
+dependencies = [
+ "anstream",
+ "anstyle",
+ "clap_lex",
+ "strsim",
+]
+
+[[package]]
+name = "clap_derive"
+version = "4.6.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9c751b79415d4e559e3d1fcf128e09e720eb673a06d26cf6f392d37d75b66e0"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 3.0.6",
+]
+
+[[package]]
+name = "clap_lex"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
+
+[[package]]
+name = "colorchoice"
+version = "1.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "const-oid"
@@ -538,6 +634,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "is_terminal_polyfill"
+version = "1.70.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
+
+[[package]]
 name = "itertools"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -767,6 +869,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
+name = "once_cell_polyfill"
+version = "1.70.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
+
+[[package]]
 name = "parking_lot"
 version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -963,9 +1071,9 @@ checksum = "ba39f3699c378cd8970968dcbff9c43159ea4cfbd88d43c00b22f2ef10a435d2"
 
 [[package]]
 name = "rez-next-common"
-version = "0.3.9"
+version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b8f0ebe9f8866a6718cc3a92cd4673941e2f94d2482fd3fb5460f303ca5cbd6"
+checksum = "ab8a9acea37a9712050abd6e735fb9db5bf60e203dbe5778ccafbb6af248a83f"
 dependencies = [
  "serde",
  "serde_json",
@@ -975,9 +1083,9 @@ dependencies = [
 
 [[package]]
 name = "rez-next-context"
-version = "0.3.9"
+version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f44e26eb5a2190770edbf24ae499c2952b86e4ca8222be69b77932df7e686949"
+checksum = "56a964adb0584e1fdae20b63d9e22c0b74715f1a0ae70ea08c845b34c8d8e592"
 dependencies = [
  "base64",
  "chrono",
@@ -997,9 +1105,9 @@ dependencies = [
 
 [[package]]
 name = "rez-next-package"
-version = "0.3.9"
+version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a909a2d36b81b4474d63a5634ab40fe14ab8f8b02b8050cfec84982cd949000e"
+checksum = "3d3588d0158b3e3f19efcbb674b1e28cccb2ab1794f36b0ba1b53466812e05f6"
 dependencies = [
  "base64",
  "bincode",
@@ -1026,9 +1134,9 @@ dependencies = [
 
 [[package]]
 name = "rez-next-repository"
-version = "0.3.9"
+version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "63f8d4cdaaae4eafef162ccf385c316fc1511b8b45064b0fe42a0cb5053f18fe"
+checksum = "361f10e243dd3012a956b8d906f87c3fd2d3e5d4ecee37ec7a459d2730fec028"
 dependencies = [
  "ahash",
  "async-trait",
@@ -1054,9 +1162,9 @@ dependencies = [
 
 [[package]]
 name = "rez-next-rex"
-version = "0.3.9"
+version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8a808d6a0199bc3c99f0261c3b9f77363459fb0d66aff59ac605c95cf5b64ce"
+checksum = "deb998d6cdc91735c13f105f344bb4b129f7a16337855e907fe780ae87bfc380"
 dependencies = [
  "regex",
  "rez-next-common",
@@ -1066,26 +1174,29 @@ dependencies = [
 
 [[package]]
 name = "rez-next-runtime"
-version = "0.3.9"
+version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7679371d588eaab9c0c2273be55056587f03bde9c1077ef7c02846d05a0f8c61"
+checksum = "9a25a55055f9156aaa31d0c4595b159b508f2f85ad9bda7bb1eda2d1d8a7a238"
 dependencies = [
  "async-trait",
+ "clap",
  "rez-next-common",
  "rez-next-context",
  "rez-next-package",
  "rez-next-repository",
  "rez-next-solver",
  "rez-next-version",
- "serde_yaml",
+ "serde",
+ "serde_json",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
 name = "rez-next-solver"
-version = "0.3.9"
+version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e98f201fafd4bddb5cfe30df8ee4db31327bddb62593ed527bb0663ec5b9419"
+checksum = "0930fc8ad5142d530ee458834dd43ff9ba32c46c34c6eb0df304080b84965788"
 dependencies = [
  "dashmap",
  "futures",
@@ -1103,9 +1214,9 @@ dependencies = [
 
 [[package]]
 name = "rez-next-version"
-version = "0.3.9"
+version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14ca363a8acb7a262ab5e46139271da34b5c3e0d36934823534c1c38243f4c44"
+checksum = "eaa0eb4a838c240d3f73f55bff763e112efc76c748e4388a687e91f1ffbb437c"
 dependencies = [
  "ahash",
  "once_cell",
@@ -1386,6 +1497,12 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
+name = "strsim"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "syn"
@@ -1670,6 +1787,12 @@ name = "unty"
 version = "0.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6d49784317cd0d1ee7ec5c716dd598ec5b4483ea832a2dced265471cc0f690ae"
+
+[[package]]
+name = "utf8parse"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"

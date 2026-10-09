@@ -1,6 +1,6 @@
 # vx-rez-adapter
 
-Rust bridge from [vx](https://github.com/vx-org) to [Rez Next](https://github.com/loonghao/rez-next) package environments.
+Rust bridge from [vx](https://github.com/vx-org) to [Rez Next](https://github.com/vx-org/rez-next) package environments.
 
 The adapter delegates repository lookup, dependency resolution, variant selection, package materialization, and Rex activation to `rez-next-runtime`. It converts the SDK result into a deterministic environment and delta, then launches the requested program directly.
 
@@ -11,7 +11,7 @@ The adapter delegates repository lookup, dependency resolution, variant selectio
 vx-rez-adapter = "0.1.0"
 ```
 
-Requires Rust 1.95.0 or newer. The runtime SDK dependency is pinned to `rez-next-runtime = "=0.3.9"` from crates.io; no Git or local path dependency is needed by consumers.
+Requires Rust 1.95.0 or newer. The runtime SDK dependency is pinned to `rez-next-runtime = "=0.3.10"` from crates.io; no Git or local path dependency is needed by consumers.
 
 ## Resolve an environment
 

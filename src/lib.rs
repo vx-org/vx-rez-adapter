@@ -1,5 +1,5 @@
 //! `vx-rez-adapter` bridges [vx](https://github.com/vx-org) and
-//! [rez-next](https://github.com/loonghao/rez-next) package environments.
+//! [rez-next](https://github.com/vx-org/rez-next) package environments.
 //!
 //! The crate is intended to expose two capabilities:
 //!
