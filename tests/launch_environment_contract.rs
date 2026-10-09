@@ -4,23 +4,99 @@ use vx_rez_adapter::{Environment, LaunchRequest, RezAdapter};
 
 #[rstest]
 fn test_launch_explicit_empty_environment_clears_parent() {
-    let request = LaunchRequest::new(std::env::current_exe().unwrap())
-        .args(["--ignored", "--exact", "test_child_empty_environment"])
-        .environment(Environment::new());
-    assert!(RezAdapter::new().launch(&request).unwrap().success());
+    assert_launch_environment(Environment::new());
 }
 
 #[rstest]
 fn test_launch_explicit_environment_is_exact() {
-    let request = LaunchRequest::new(std::env::current_exe().unwrap())
-        .args(["--ignored", "--exact", "test_child_exact_environment"])
-        .environment(Environment::from([(
-            "VX_ADAPTER_ENV_PROOF".to_owned(),
-            "exact".to_owned(),
-        )]));
+    assert_launch_environment(Environment::from([(
+        "VX_ADAPTER_ENV_PROOF".to_owned(),
+        "exact".to_owned(),
+    )]));
+}
+
+fn assert_launch_environment(environment: Environment) {
+    #[cfg(target_os = "macos")]
+    let directory = tempfile::tempdir().unwrap();
+    #[cfg(target_os = "macos")]
+    let request = LaunchRequest::new(compile_environment_probe(directory.path())).args(
+        environment
+            .iter()
+            .map(|(name, value)| format!("{name}={value}")),
+    );
+
+    #[cfg(not(target_os = "macos"))]
+    let request = LaunchRequest::new(std::env::current_exe().unwrap()).args([
+        "--ignored",
+        "--exact",
+        if environment.is_empty() {
+            "test_child_empty_environment"
+        } else {
+            "test_child_exact_environment"
+        },
+    ]);
+
+    let request = request.environment(environment);
     assert!(RezAdapter::new().launch(&request).unwrap().success());
 }
 
+#[cfg(target_os = "macos")]
+fn compile_environment_probe(directory: &std::path::Path) -> std::path::PathBuf {
+    // CoreFoundation can set __CF_USER_TEXT_ENCODING during initialization:
+    // https://github.com/apple-oss-distributions/CF/blob/main/CFRuntime.c
+    // https://github.com/apple-oss-distributions/CF/blob/main/CFStringEncodings.c
+    // Check the delivered environment with a libSystem-only native executable,
+    // before application frameworks can change it. No variables are exempted.
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/launch_environment_probe.c");
+    let executable = directory.join("launch_environment_probe");
+    let output = std::process::Command::new("/usr/bin/cc")
+        .args(["-std=c11", "-Wall", "-Wextra", "-Werror"])
+        .arg(source)
+        .arg("-o")
+        .arg(&executable)
+        .output()
+        .expect("the macOS native compiler must be available for the environment probe");
+    assert!(
+        output.status.success(),
+        "native environment probe compilation failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    executable
+}
+
+#[cfg(target_os = "macos")]
+#[rstest]
+#[case(false, false)]
+#[case(true, false)]
+#[case(true, true)]
+fn test_native_environment_probe_rejects_mismatched_environment(
+    #[case] expect_marker: bool,
+    #[case] wrong_value: bool,
+) {
+    let directory = tempfile::tempdir().unwrap();
+    let mut request = LaunchRequest::new(compile_environment_probe(directory.path()));
+    let mut environment = Environment::new();
+    if expect_marker {
+        request = request.arg("VX_ADAPTER_ENV_PROOF=exact");
+        environment.insert(
+            "VX_ADAPTER_ENV_PROOF".to_owned(),
+            if wrong_value { "wrong" } else { "exact" }.to_owned(),
+        );
+    }
+    if !wrong_value {
+        environment.insert(
+            "VX_ADAPTER_UNEXPECTED_VARIABLE".to_owned(),
+            "extra".to_owned(),
+        );
+    }
+    let outcome = RezAdapter::new()
+        .launch(&request.environment(environment))
+        .unwrap();
+    assert_eq!(outcome.code, Some(1));
+}
+
+#[cfg(not(target_os = "macos"))]
 #[rstest]
 #[ignore = "executed by the parent launch contract with an empty environment"]
 fn test_child_empty_environment() {
@@ -33,6 +109,7 @@ fn test_child_empty_environment() {
     );
 }
 
+#[cfg(not(target_os = "macos"))]
 #[rstest]
 #[ignore = "executed by the parent launch contract with an exact environment"]
 fn test_child_exact_environment() {
