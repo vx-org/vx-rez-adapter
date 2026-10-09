@@ -126,6 +126,63 @@ fn test_child_exact_environment() {
 
 #[cfg(windows)]
 #[rstest]
+fn test_resolve_and_launch_with_canonical_repository_root() {
+    use std::fs;
+    use std::path::PathBuf;
+
+    use vx_rez_adapter::ResolveRequest;
+
+    let directory = tempfile::Builder::new()
+        .prefix("canonical repo's ")
+        .tempdir()
+        .unwrap();
+    let repository = directory.path().canonicalize().unwrap();
+    let root = repository.join("canonical_application").join("1.0.0");
+    let bin = root.join("payload").join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    fs::copy(
+        std::env::current_exe().unwrap(),
+        bin.join("vx_adapter_path_probe.exe"),
+    )
+    .unwrap();
+    fs::write(
+        root.join("package.py"),
+        concat!(
+            "name = 'canonical_application'\nversion = '1.0.0'\n",
+            "tools = ['vx_adapter_path_probe']\n",
+            "def commands():\n",
+            "    env.PATH.prepend('{root}/payload/bin')\n",
+            "    env.VX_ADAPTER_EXPECTED_EXECUTABLE = '{root}/payload/bin/vx_adapter_path_probe.exe'\n",
+        ),
+    )
+    .unwrap();
+
+    let adapter = RezAdapter::new();
+    let resolved = adapter
+        .resolve_env(
+            &ResolveRequest::new(["canonical_application-1.0.0"])
+                .package_paths([repository])
+                .parent_environment(Environment::new()),
+        )
+        .unwrap();
+    assert_eq!(
+        PathBuf::from(&resolved.environment["PATH"])
+            .canonicalize()
+            .unwrap(),
+        bin.canonicalize().unwrap()
+    );
+    let outcome = adapter
+        .launch(
+            &LaunchRequest::new("vx_adapter_path_probe")
+                .args(["--ignored", "--exact", "test_child_path_probe"])
+                .environment(resolved.environment),
+        )
+        .unwrap();
+    assert!(outcome.success());
+}
+
+#[cfg(windows)]
+#[rstest]
 #[case("absent")]
 #[case("empty")]
 #[case("disjoint")]
