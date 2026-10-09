@@ -24,14 +24,27 @@ fn test_launch_explicit_environment_is_exact() {
 #[rstest]
 #[ignore = "executed by the parent launch contract with an empty environment"]
 fn test_child_empty_environment() {
-    assert_eq!(std::env::vars_os().count(), 0);
+    let variable_names = std::env::vars_os()
+        .map(|(name, _)| name)
+        .collect::<Vec<_>>();
+    assert!(
+        variable_names.is_empty(),
+        "unexpected child environment variable names: {variable_names:?}"
+    );
 }
 
 #[rstest]
 #[ignore = "executed by the parent launch contract with an exact environment"]
 fn test_child_exact_environment() {
     assert_eq!(std::env::var("VX_ADAPTER_ENV_PROOF").unwrap(), "exact");
-    assert_eq!(std::env::vars_os().count(), 1);
+    let variable_names = std::env::vars_os()
+        .map(|(name, _)| name)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        variable_names,
+        [std::ffi::OsString::from("VX_ADAPTER_ENV_PROOF")],
+        "unexpected child environment variable names"
+    );
 }
 
 #[cfg(windows)]
