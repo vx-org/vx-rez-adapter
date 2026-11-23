@@ -8,10 +8,10 @@ The adapter delegates repository lookup, dependency resolution, variant selectio
 
 ```toml
 [dependencies]
-vx-rez-adapter = "0.1.0"
+vx-rez-adapter = "0.1.1"
 ```
 
-Requires Rust 1.95.0 or newer. The runtime SDK dependency is pinned to `rez-next-runtime = "=0.3.10"` from crates.io; no Git or local path dependency is needed by consumers.
+Requires Rust 1.95.0 or newer. The runtime SDK dependency is pinned to `rez-next-runtime = "=0.4.1"` from crates.io; no Git or local path dependency is needed by consumers.
 
 ## Resolve an environment
 

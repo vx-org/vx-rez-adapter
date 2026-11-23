@@ -339,6 +339,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "dirs"
+version = "7.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d57d423b3c82e89b9a24ca3091fee61f456a26edbd28d26c65906f4bc1dcd8f"
+dependencies = [
+ "dirs-sys",
+]
+
+[[package]]
+name = "dirs-sys"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e01a3366d27ee9890022452ee61b2b63a67e6f13f58900b651ff5665f0bb1fab"
+dependencies = [
+ "libc",
+ "option-ext",
+ "redox_users",
+ "windows-sys",
+]
+
+[[package]]
 name = "dunce"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -371,6 +392,16 @@ name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
+
+[[package]]
+name = "filetime"
+version = "0.2.30"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1255e7a9f1902190d4c10a75f2f7f495d3d3ce13e9ba26e6c48683a0f4dbed7"
+dependencies = [
+ "cfg-if",
+ "libc",
+]
 
 [[package]]
 name = "find-msvc-tools"
@@ -666,6 +697,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "json5"
+version = "1.3.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c1d229cedc4e210dd2e2a6cdc59e36ce28e7338fb69367d0d2566e26de7d599"
+dependencies = [
+ "serde",
+ "ucd-trie",
+]
+
+[[package]]
 name = "lalrpop-util"
 version = "0.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -875,6 +916,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
+name = "option-ext"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
+
+[[package]]
 name = "parking_lot"
 version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1035,6 +1082,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "redox_users"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "60dc65c0ff1a7ae1294b0c67b9f14baf70b644404010370171787bfac1038fc0"
+dependencies = [
+ "libredox",
+ "thiserror",
+]
+
+[[package]]
 name = "regex"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1071,10 +1128,11 @@ checksum = "ba39f3699c378cd8970968dcbff9c43159ea4cfbd88d43c00b22f2ef10a435d2"
 
 [[package]]
 name = "rez-next-common"
-version = "0.3.10"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab8a9acea37a9712050abd6e735fb9db5bf60e203dbe5778ccafbb6af248a83f"
+checksum = "5aeedcf3e3a0bd12bfe5c544ca644dc8d9064ada298ff45aff1a682d31a9e13f"
 dependencies = [
+ "rez-next-config",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -1082,10 +1140,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "rez-next-context"
-version = "0.3.10"
+name = "rez-next-config"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56a964adb0584e1fdae20b63d9e22c0b74715f1a0ae70ea08c845b34c8d8e592"
+checksum = "b2588c0d4ba7fa12d01bb21314ced2b31ea6c29a8e6618b6a41b5332e4e7186e"
+dependencies = [
+ "dirs",
+ "json5",
+ "once_cell",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror",
+ "toml",
+ "tracing",
+]
+
+[[package]]
+name = "rez-next-context"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5518854d170b559f7d5aabce27cee385a87a9e548f5f1e1102b984ab6322d9b8"
 dependencies = [
  "base64",
  "chrono",
@@ -1105,9 +1180,9 @@ dependencies = [
 
 [[package]]
 name = "rez-next-package"
-version = "0.3.10"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d3588d0158b3e3f19efcbb674b1e28cccb2ab1794f36b0ba1b53466812e05f6"
+checksum = "0c55763323225ccbecfd502d698a2633848542c8f843c995737acc1ae2d43b2e"
 dependencies = [
  "base64",
  "bincode",
@@ -1134,14 +1209,15 @@ dependencies = [
 
 [[package]]
 name = "rez-next-repository"
-version = "0.3.10"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "361f10e243dd3012a956b8d906f87c3fd2d3e5d4ecee37ec7a459d2730fec028"
+checksum = "c3dddffc8db8734a83abddb9561ab8628a00ad3dca9ca27eac461d98219eeee7"
 dependencies = [
  "ahash",
  "async-trait",
  "chrono",
  "dashmap",
+ "filetime",
  "futures",
  "lru",
  "memmap2",
@@ -1162,9 +1238,9 @@ dependencies = [
 
 [[package]]
 name = "rez-next-rex"
-version = "0.3.10"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "deb998d6cdc91735c13f105f344bb4b129f7a16337855e907fe780ae87bfc380"
+checksum = "686ec7a2a6ff6ef767e8afbc20f8d6178efd99b288e0c62fdd8fb987be99761f"
 dependencies = [
  "regex",
  "rez-next-common",
@@ -1174,9 +1250,9 @@ dependencies = [
 
 [[package]]
 name = "rez-next-runtime"
-version = "0.3.10"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a25a55055f9156aaa31d0c4595b159b508f2f85ad9bda7bb1eda2d1d8a7a238"
+checksum = "c24737073b93f65c036fe080cf9944011734472a0239d746507591341bfaab24"
 dependencies = [
  "async-trait",
  "clap",
@@ -1194,9 +1270,9 @@ dependencies = [
 
 [[package]]
 name = "rez-next-solver"
-version = "0.3.10"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0930fc8ad5142d530ee458834dd43ff9ba32c46c34c6eb0df304080b84965788"
+checksum = "d6213a12dd06504ba71c8804d50f87f21bd44b1de7219a5435d53aa771cec2f3"
 dependencies = [
  "dashmap",
  "futures",
@@ -1214,9 +1290,9 @@ dependencies = [
 
 [[package]]
 name = "rez-next-version"
-version = "0.3.10"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eaa0eb4a838c240d3f73f55bff763e112efc76c748e4388a687e91f1ffbb437c"
+checksum = "d2696aec14f46f0d02536cad5ad07147049987974b3fb45049896e59df9f1f20"
 dependencies = [
  "ahash",
  "once_cell",
@@ -1683,6 +1759,12 @@ name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
+
+[[package]]
+name = "ucd-trie"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f20bdbfc9915686faa18fb5bbe8b4552778505defbf9f12289beefbc44092a6"
 
 [[package]]
 name = "unic-char-property"
